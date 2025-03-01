@@ -1,46 +1,86 @@
-name: download_file
-conda_env: conda.yml
+import os
 
-entry_points:
-  main:
-    parameters:
+import pandas as pd
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
-      trainval_artifact:
-        description: Train dataset
-        type: string
+from ml.data import apply_label, process_data
+from ml.model import inference, load_model
 
-      val_size:
-        description: Size of the validation split. Fraction of the dataset, or number of items
-        type: string
 
-      random_seed:
-        description: Seed for the random number generator. Use this for reproducibility
-        type: string
-        default: 42
+# DO NOT MODIFY
+class Data(BaseModel):
+    age: int = Field(..., example=37)
+    workclass: str = Field(..., example="Private")
+    fnlgt: int = Field(..., example=178356)
+    education: str = Field(..., example="HS-grad")
+    education_num: int = Field(..., example=10, alias="education-num")
+    marital_status: str = Field(
+        ...,
+        example="Married-civ-spouse",
+        alias="marital-status",
+    )
+    occupation: str = Field(..., example="Prof-specialty")
+    relationship: str = Field(..., example="Husband")
+    race: str = Field(..., example="White")
+    sex: str = Field(..., example="Male")
+    capital_gain: int = Field(..., example=0, alias="capital-gain")
+    capital_loss: int = Field(..., example=0, alias="capital-loss")
+    hours_per_week: int = Field(..., example=40, alias="hours-per-week")
+    native_country: str = Field(
+        ...,
+        example="United-States",
+        alias="native-country",
+    )
 
-      stratify_by:
-        description: Column to use for stratification (if any)
-        type: string
-        default: 'none'
 
-      rf_config:
-        description: Random forest configuration. A path to a JSON file with the configuration that will
-                     be passed to the scikit-learn constructor for RandomForestRegressor.
-        type: string
+project_path = "/mnt/c/Users/kaleb/Desktop/DEPLOYING-A-SCALABLE-ML-PIPELINE-WITH-FASTAPI"
 
-      max_tfidf_features:
-        description: Maximum number of words to consider for the TFIDF
-        type: string
+encoder_path = os.path.join(project_path, "model", "encoder.pkl")
+encoder = load_model(encoder_path)
 
-      output_artifact:
-        description: Name for the output artifact
-        type: string
+model_path = os.path.join(project_path, "model", "model.pkl")
+model = load_model(model_path)
 
-    command: >-
-      python run.py --trainval_artifact {trainval_artifact} \
-                    --val_size {val_size} \
-                    --random_seed {random_seed} \
-                    --stratify_by {stratify_by} \
-                    --rf_config {rf_config} \
-                    --max_tfidf_features {max_tfidf_features} \
-                    --output_artifact {output_artifact}
+
+app = FastAPI()
+
+
+@app.get("/")
+async def get_root():
+    """ Say hello!"""
+    return {"message": "Hello! Welcome to Stephen's API."}
+
+
+@app.post("/data/")
+async def post_inference(data: Data):
+    # DO NOT MODIFY: turn the Pydantic model into a dict.
+    data_dict = data.dict()
+    # DO NOT MODIFY: clean up the dict to turn it into a Pandas DataFrame.
+    # The data has names with hyphens and Python does not allow those as variable names.
+    # Here it uses the functionality of FastAPI/Pydantic/etc to deal with this.
+    data = {k.replace("_", "-"): [v] for k, v in data_dict.items()}
+    data = pd.DataFrame.from_dict(data)
+
+    cat_features = [
+        "workclass",
+        "education",
+        "marital-status",
+        "occupation",
+        "relationship",
+        "race",
+        "sex",
+        "native-country",
+    ]
+
+    data_processed, _, _, _ = process_data(
+        data,
+        categorical_features=cat_features,
+        training=False,
+        encoder=encoder,
+    )
+
+    _inference = inference(model, data_processed)
+    return {
+        "result": apply_label(_inference)
+    }
